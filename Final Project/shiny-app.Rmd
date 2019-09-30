@@ -1,0 +1,321 @@
+---
+title: "Mining Public Opinion about `#immigration`"
+subtitle: "STA523 Final Project"
+author: "Haohan Chen, Siqi Fu, Yizi Lin, Chao Yang, Hongshen Zhu"
+date: "12/15/2018"
+output: html_document
+runtime: shiny
+---
+
+<style type="text/css">
+.shiny-frame{
+  width: 100%;
+  height: 1500px;
+}
+</style>
+
+**Shiny App**  
+We create a Shiny application that allows users to view recent Tweets of a query term of interest. When an user input a query word and click the "submit" button, our App search for 2000 recent Tweets containing the term with the Twitter API (limited to English Tweets).   
+  
+  
+Then, it draws a word cloud to show frequent of the found Tweets. We also use `Data Table` to show the original returned data in a seperate panel. Our App also shows visualization of the user information, their sentiment, and the topics included (through topic modeling). Since geo-tagging is time-consuming, we did not visualize the map in the shiny app.
+
+```{r, include=FALSE}
+knitr::opts_chunk$set(message = FALSE, warning = FALSE)
+```
+
+
+```{r}
+if (!("DT" %in% installed.packages()[, 1])){
+  install.packages("DT")
+}
+if (!("devtools" %in% installed.packages()[, 1])){
+  install.packages("devtools")
+}
+if (!("ggmap" %in% installed.packages()[, 1])){
+  devtools::install_github("dkahle/ggmap")
+}
+if (!("wordcloud2" %in% installed.packages()[, 1])){
+  devtools::install_github("lchiffon/wordcloud2")
+}
+
+
+library(shiny)
+library(DT)
+library(wordcloud2)
+library(rtweet)
+library(tidyverse)
+library(lubridate)
+library(stringr)
+library(tidytext)
+library(topicmodels)
+library(ggplot2)
+
+
+get_tweets = function(query){
+  api_key = "Hgj9nhsN2FPhruxxpwhttnBOS"
+  api_secret = "IQXwprbhJYzBCqhEIpkJLcuPSPQaYTMWadj3BMg3nWrcnBIpwd"
+  access_token = "1068608387334766593-BpB8hUTe09InPeeGrAqZF9Rk2SEomb"
+  access_secret = "phFEUzi8xfvjaS7XKi5i8VNjXzoDUh326mcJ6SczheBH6"
+  
+  library(rtweet)
+  
+  create_token(
+    app = "immigration_trend",
+    consumer_key = api_key,
+    consumer_secret = api_secret,
+    access_token = access_token,
+    access_secret = access_secret)
+  
+  rt = search_tweets(
+    query, n = 2000, include_rts = FALSE, 
+    verbose = TRUE,
+    parse = TRUE,
+    retryonratelimit = FALSE
+  )
+  
+  data <- rt %>%
+    select(user_id, source, text, screen_name, status_id, created_at,
+           favorite_count, retweet_count, verified, is_quote,
+           account_lang) %>%
+    filter(account_lang %in% c("en")) %>%
+    select(-account_lang)
+  
+  return(data)
+}
+
+get_stop_words_ext = function(){
+  data("stop_words")
+  stop_word_add = tibble(
+    word = c("https", "t.co", "amp"), 
+    lexicon = NA)
+  stop_words_ext = 
+    stop_words %>% bind_rows(stop_word_add)
+  
+  return(stop_words_ext)
+}
+
+get_usersource = function(data){
+  source.data = data %>%
+    select(user_id, source)  %>%
+    group_by(source) %>%
+    summarise(count = n()) %>%
+    arrange(desc(count)) %>%
+    mutate(percent = count/sum(count)*100) %>%
+    as.data.frame() %>%
+    .[1:5,]
+  
+  ggplot(source.data) +
+    geom_bar(mapping = aes(x=source, y=percent,fill=source), stat = "identity") +
+    ggtitle("Source") +
+    theme(plot.title = element_text(hjust = 0.5))
+}
+
+get_topicmodel = function(data, query, stop_words_ext){
+  dtm = data %>% 
+    select(status_id, text) %>%
+    unnest_tokens(word, text) %>% 
+    anti_join(stop_words_ext) %>%
+    group_by(status_id, word) %>%
+    summarise(n = n()) %>%
+    filter(word != str_replace(query, "#", "")) %>% 
+    cast_dtm(status_id, word, n)
+  
+  dtm_t = tm::removeSparseTerms(dtm, 0.998)
+  
+  rowTotals = apply(dtm_t, 1, sum)
+  dtm_t = dtm_t[rowTotals> 0,]
+  
+  m_lda <- LDA(dtm_t, k = 12, control = list(seed = 201812))
+  
+  g = m_lda %>%
+    tidy() %>%
+    group_by(topic) %>%
+    top_n(8, beta) %>%
+    ungroup() %>%
+    mutate(term = reorder(term, beta)) %>%
+    ggplot(aes(term, beta, fill = factor(topic))) +
+    geom_col(show.legend = FALSE) +
+    facet_wrap(~ topic, ncol = 3, scales = "free_y") +
+    coord_flip() + 
+    ggtitle("Topic Modeling") +
+    theme(plot.title = element_text(hjust = 0.5))
+  
+  return(g)
+  
+}
+
+get_screenname = function(data){
+  source.data.1 = data %>%
+    select(user_id, screen_name) %>%
+    group_by(screen_name) %>%
+    summarise(count = n()) %>%
+    arrange(desc(count)) %>% 
+    .[1:5,]
+  
+  ggplot(source.data.1) +
+    geom_bar(mapping = aes(x=screen_name, y=count,fill=screen_name), stat = "identity") +
+    ggtitle("Screen Name") +
+    theme(plot.title = element_text(hjust = 0.5))+
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+}
+
+get_verify = function(data){
+    source.data.3=data %>%
+    select(user_id,verified) %>%
+    group_by(verified) %>% 
+    summarise(count=n()) %>% 
+    mutate(percent = count/sum(count)*100)
+  
+  ggplot(source.data.3, aes("", percent, fill = verified)) +
+    geom_bar(width = 1, size = 1, color = "white", stat = "identity") +
+    coord_polar("y") +
+    geom_text(aes(label = paste0(round(percent), "%")), 
+              position = position_stack(vjust = 0.5)) +
+    labs(x = NULL, y = NULL, fill = NULL, 
+         title = "Is_verified") +
+    guides(fill = guide_legend(reverse = TRUE)) +
+    theme_classic() +
+    theme(axis.line = element_blank(),
+          axis.text = element_blank(),
+          axis.ticks = element_blank(),
+          plot.title = element_text(hjust = 0.5, color = "#666666"))
+}
+
+get_quote = function(data){
+  source.data.2=data %>%
+    select(user_id,is_quote) %>% 
+    group_by(is_quote) %>% 
+    summarise(count=n()) %>% 
+    mutate(percent = count/sum(count)*100)
+  
+    ggplot(source.data.2, aes("", percent, fill = is_quote)) +
+    geom_bar(width = 1, size = 1, color = "white", stat = "identity") +
+    coord_polar("y") +
+    geom_text(aes(label = paste0(round(percent), "%")), 
+              position = position_stack(vjust = 0.5)) +
+    labs(x = NULL, y = NULL, fill = NULL, 
+         title = "Is Quote? ") +
+    guides(fill = guide_legend(reverse = TRUE)) +
+    theme_classic() +
+    theme(axis.line = element_blank(),
+          axis.text = element_blank(),
+          axis.ticks = element_blank(),
+          plot.title = element_text(hjust = 0.5, color = "#666666"))
+}
+
+
+
+shinyApp(
+  ui = fluidPage(
+    titlePanel("Twitter API"),
+    sidebarLayout(
+      sidebarPanel(
+        textInput("query", "Query Term", value = "#immigration"),
+        selectInput("analysis", "Visualization Analysis Method", 
+                    c("User Source", "Topic Model",
+                      "Screen Name", "Verified", "Quote"), 
+                    selected ="User Source"),
+        actionButton("update", "Submit")
+      ),
+      mainPanel(
+        tabsetPanel(type = "tabs",
+                    tabPanel("Word Cloud", 
+                             h4("Word Frequency"),
+                             wordcloud2Output('wordfreq'),
+                             h4("Positive Sentiment"),
+                             wordcloud2Output('positivecloud'),
+                             h4("Negative Sentiment"),
+                             wordcloud2Output('negativecloud')),
+                    tabPanel("Visualization", plotOutput("Analysisplot")),
+                    tabPanel("Data Table", DT::dataTableOutput("mytable"))
+        )
+      )
+    )
+  ),
+  server = function(input, output, session)
+  {
+    get_data = eventReactive(input$update,
+                             get_tweets(query = input$query)
+    )
+    
+    observeEvent(get_data(), {
+      data = get_data()
+      stop_words_ext = get_stop_words_ext()
+      
+      output$wordfreq <- renderWordcloud2({
+        word_count = data %>% 
+          select(text) %>%
+          unnest_tokens(word, text) %>% 
+          anti_join(stop_words_ext) %>% # Remove stop words
+          count(word, sort = TRUE) 
+        
+        word_count %>%
+          filter(n > 10) %>%
+          wordcloud2(size = 4)
+      })
+      
+      output$positivecloud <- renderWordcloud2({
+        word_count = data %>% 
+          select(text) %>%
+          unnest_tokens(word, text) %>% 
+          anti_join(stop_words_ext) %>% # Remove stop words
+          count(word, sort = TRUE) 
+        
+        word_count %>%  
+          inner_join(get_sentiments("bing")) %>%
+          filter(sentiment == "positive") %>%
+          filter(word != "trump") %>% # misclassified as positive
+          filter(n > 5) %>%
+          wordcloud2(color = "random-light")
+      })
+      
+      output$negativecloud <-renderWordcloud2({
+        word_count = data %>% 
+          select(text) %>%
+          unnest_tokens(word, text) %>% 
+          anti_join(stop_words_ext) %>% # Remove stop words
+          count(word, sort = TRUE) 
+        
+        word_count %>%  
+          inner_join(get_sentiments("bing")) %>%
+          filter(sentiment == "negative") %>%
+          filter(word != "trump") %>%
+          filter(n > 5) %>%
+          wordcloud2(color = "random-dark")
+      })
+      
+      output$Analysisplot <- renderPlot({
+        
+        if(input$analysis == "User Source"){
+          g = get_usersource(data)
+        }
+        
+        if(input$analysis == "Topic Model"){
+          g = get_topicmodel(data, input$query, stop_words_ext)
+        }
+        
+        if(input$analysis == "Screen Name"){
+          g = get_screenname(data)
+        }
+        
+        if(input$analysis == "Verified"){
+          g = get_verify(data)
+        }
+        if(input$analysis == "Quote"){
+          g = get_quote(data)
+        }
+        
+        g
+        
+      })
+      
+      output$mytable = renderDataTable({
+        data
+      })
+      
+    })
+  }
+)
+
+```
