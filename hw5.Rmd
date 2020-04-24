@@ -1,0 +1,83 @@
+Homework 5
+========================================================
+
+
+## Task 1 - Scraping LQ
+
+<!-- Detail your approach for scraping hotel data from LQ's website -->
+
+We first downloaded the json file of La Quintas from a local cache of the La Quinta hotel listing page.    
+First of all, we went to www.lq.com and found the hotel list. Opening up one hotel, we could found a hotel-summary.****.en.json file in network of inspect. That's the json file we need and every hotel has one.   
+Then we set the base url, a data/lq folder and a possibly download fuction. We then pasted "hotel-summary.", id and ".en.json" to build hotel specific url. In order to download the json files of La Quintas in Canada, US, and Mexicon, we used the purrr::walk with id 0:9999. With the code stored in the get_lq.R, we obtained 935 json files.     
+In order to retrieve the information in json files to data frame, we used the jsonlite package to read json files stored in data/lq and map_dfr to contruct a data frame. The data frame contains the name, country, address (street, city, state, zipcode), phone number, latitude, longitude, wifi and if they have swimming pools of 935 La Quintas. We write the if statement when getting phone number to assign NA when no phone number available. Since we are only interested in La Quintas in Canada, United States, and Mexico, we then apply the filter function to get the data frame and store it in data folder.
+
+<br />
+
+
+## Task 2 - Scraping Denny's
+
+<!-- Detail your approach for scraping restaurant data from where2getit -->
+
+In scraping the data for Dennys, we first read in the highest level of the heirarchy, which consisted mostly of states but also contained cities and specific locations. Because of the different locale layers in this highest level of the heirarchy, we created a helper function named "places" that assisted in distinguishing between states, cities, and locations, where 0, 1, and 2 corresponded to these levels, respectively. This function took advantage of the precense of backslashes in the url to distinguish between different location levels. Additionally, we created another helper function (titled sweepOver) that runs over a list of a level in the hierarchy and uses a supplied tag to extract the href for the purpose of building URLs for lower levels of the hierarchy. Using this function twice allows the urls to be extracted for every specific location in preperation for downloading the files. Once this expansion of the list has been completed, we utilize walk to download each html into the data/dennys folder. 
+
+<br />
+
+
+## Task 3 -  Distance Analysis
+
+```{r warning=F}
+library(tidyverse)
+install.packages("geosphere")
+library(geosphere)
+install.packages("ggmap")
+library(ggmap)
+dennys = readRDS("data/dennys.rds")
+lq = readRDS("data/lq.rds")
+```
+
+<!-- Detail your statistical analysis of the pairwise distance between Denny's and LQ's -->
+
+```{r calculate}
+dist = matrix(NA, nrow(dennys), nrow(lq))
+
+for(i in 1: nrow(dennys)) {
+  for (j in 1: nrow(lq)){
+    dist[i, j] = distm(c(dennys$longitude[i], dennys$latitude[i]),
+                       c(lq$longitude[j], lq$latitude[j]))
+  }
+}
+
+# calculate distance and transform to miles from metres
+dennys_lq = cbind(distance = apply(dist, 1, min)/1609,
+                  dennys = dennys,
+                  lq = lq[apply(dist, 1, which.min),])
+
+lq_dennys = cbind(distance = apply(dist, 2, min)/1609,
+                  lq = lq,
+                  dennys = dennys[apply(dist, 2, which.min),])
+
+```
+
+```{r plot}
+plot(density(lq_dennys[["distance"]]), col = "darkgreen", main = "Distances", xlim = c(0,150), xlab = "distance in miles", lwd = 3)
+lines(density(dennys_lq[["distance"]]), col = "goldenrod3", lwd = 3)
+legend(x = 50, y = 0.08, legend = c("La Quinta to Dennys Distances", "Dennys to La Quinta Distances"),lwd = c(3,3), lty = c(1,1), col = c("darkgreen", "goldenrod3"))
+```
+
+```{r echo = F}
+cat("Median LQ to Dennys:")
+median(lq_dennys[["distance"]])
+cat("Median Dennys to LQ:")
+median(dennys_lq[["distance"]])
+```
+We can see that most La Quinta hotels are within 3.6 miles of a Dennys restaurant, and most Dennys restaurants are within 6.1 miles of a La Quinta hotel. This supports the claim that Mitch Hedberg made, that Dennys and La Quintas are often found in close proximity, beyond what one would expect if they were placed independently. We do not have a reference distribution of distances between things to compare this incidence to of compute a test statistic, but from personal experience, knowing that there is likely to be a certain franchise location of one chain within 4 miles of another appears to be a strong association. The Dennys to La Quinta distances are slightly larger than the La Quinta to Dennys distances because there are fewer La Quintas, and they are more evenly dispersed throughout the countries. In addition, the largest distance values are all in the Dennys to La Quinta distance set, because there are 6 Dennys locations in Hawaii and the nearest La Quinta is in San Francisco, so the distances are all greater than 2000 miles. The next largest distances are around 150 miles.
+
+```{r lqplot, message=F, fig.height=10, fig.width=10}
+USlq_dennys = filter(lq_dennys, lq.country == "United States" )
+usa <- map_data("usa")
+ggplot() + geom_polygon(data = usa, aes(x=long, y = lat, group = group), alpha = 0.3) + 
+  coord_fixed(1.3) + geom_point(aes(x = USlq_dennys$lq.longitude, y = USlq_dennys$lq.latitude, size = USlq_dennys$distance), alpha = 0.5, show.legend = F, na.rm = T) + xlim(-130, -65) + ylim(22, 53) + theme_bw() + ggtitle("La Quintas in the Contiguous United States")
+```
+Above we've plotted the locations of all the La Quinta hotels in the contiguous United States with point sizes indicating their respective distances to the nearest Dennys Restaurant. We can see that more populous areas tend to have both more La Quinta hotels and a lower average distance to the nearest Dennys. Across different regions of the US, though, this tendency varies. In Texas there are very many hotel locations, but many of them are far from the nearest Dennys, whereas in Utah there are fewer hotels, but all of them are relatively close to a Dennys.
+
+<br />
