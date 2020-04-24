@@ -1,0 +1,26 @@
+box: rocker/tidyverse
+no-response-timeout: 60
+command-timeout: 60
+
+build:
+  steps:
+    - script:
+        name: Update Packages
+        code: |
+          Rscript -e "install.packages('selectr')"
+          Rscript -e "update.packages(ask = FALSE)"
+    - script:
+        name: Check for allowed files
+        code: |
+          Rscript -e "source('https://raw.githubusercontent.com/Sta523-Fa18/hw5/master/hw5_whitelist.R')"
+    - script:
+        name: Check make runs
+        code: |
+          make
+          Rscript -e "stopifnot(file.exists('hw5.html'))"
+    - script:
+        name: Check make clean runs
+        code: |
+          make clean
+          Rscript -e "source('https://raw.githubusercontent.com/Sta523-Fa18/hw5/master/hw5_whitelist.R')"
+          
