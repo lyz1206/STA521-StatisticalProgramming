@@ -1,8 +1,8 @@
 <br/>
 
+* Yizi Lin - yl562@duke.edu
 * Evan Poworoznek - elp28@duke.edu
 * Yangfan Ren - yr47@duke.edu
-* Yizi Lin - yl562@duke.edu
 * Michael Valancius - mfv7@duke.edu
 
 [![wercker status](https://app.wercker.com/status/b470003a2e7ae0bdf6e45dcb061d8f32/s/master "wercker status")](https://app.wercker.com/project/byKey/b470003a2e7ae0bdf6e45dcb061d8f32)
